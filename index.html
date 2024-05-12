@@ -1,0 +1,260 @@
+!<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <title></title>
+    <style></style>
+  </head>
+  <body>
+    <!-- Load d3.js -->
+    <script src="https://d3js.org/d3.v6.js"></script>
+
+    <!-- Create a div where the graph will take place -->
+    <div id="my_dataviz"></div>
+
+    <script>
+      // set the dimensions and margins of the graph
+      const margin = { top: 10, right: 30, bottom: 30, left: 60 },
+        width = 640 - margin.left - margin.right,
+        height = 600 - margin.top - margin.bottom;
+
+      // append the svg object to the body of the page
+      const svg = d3
+        .select("#my_dataviz")
+        .append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      //Read the data
+      d3.json(
+        "https://climatereanalyzer.org/research_tools/monthly_tseries/output/ersst5/ersst5_world_sst_surface_1.json",
+
+        // When reading the csv, I must format variables:
+        function(d) {
+          console.log(d);
+          return d;
+          // return { date: d3.timeParse("%Y-%m-%d")(d.date), value: d.value };
+        }
+      ).then(
+        // Now I can use this dataset:
+        function(json) {
+          const data = json.data.map(d => {
+            const [date, value] = d;
+            const [year, month, day] = date
+              .split(",")
+              .map(d => parseInt(d, 10));
+
+            return {
+              year: year,
+              month,
+              day,
+              n: value
+            };
+          });
+
+          const yearMin = d3.min(data, function(d) {
+            return +d.year;
+          });
+          const yearMax = d3.max(data, function(d) {
+            return +d.year;
+          });
+          const ymin = d3.min(data, function(d) {
+            return +d.n;
+          });
+          const ymax = d3.max(data, function(d) {
+            return +d.n;
+          });
+
+          const x = d3
+            .scaleLinear()
+            .domain(
+              d3.extent(data, function(d) {
+                return d.month;
+              })
+            )
+            .range([0, width]);
+          const y = d3
+            .scaleLinear()
+            .domain([ymin - 0.5, ymax + 0.5])
+            .range([height, 0]);
+
+          const drawAxes = (svg, x, y) => {
+            // Add X axis
+            svg
+              .append("g")
+              .attr("transform", `translate(0, ${height})`)
+              .call(d3.axisBottom(x).ticks(5));
+
+            // Add Y axis
+            svg.append("g").call(d3.axisLeft(y));
+          };
+
+          const defineGradient = (svg, x, y, ymin, ymax) => {
+            // Set the gradient
+            svg
+              .append("linearGradient")
+              .attr("id", "line-gradient")
+              .attr("gradientUnits", "userSpaceOnUse")
+              .attr("x1", 0)
+              .attr("y1", y(ymin))
+              .attr("x2", 0)
+              .attr("y2", y(ymax))
+              .selectAll("stop")
+              .data([
+                { offset: "0%", color: "#410bf4" },
+                { offset: "50%", color: "#d3d3d3" },
+                { offset: "100%", color: "#f40b1f" }
+              ])
+              .enter()
+              .append("stop")
+              .attr("offset", function(d) {
+                return d.offset;
+              })
+              .attr("stop-color", function(d) {
+                return d.color;
+              });
+          };
+
+          const drawLegend = svg => {
+            const dot = svg.append("g"); // .attr("display", "none");
+            dot
+              .append("text")
+              .attr("font-size", 14)
+              .attr("text-anchor", "start")
+              .attr("y", 0);
+            return dot;
+          };
+
+          const updateLegend = (year, y) => {
+            dot.select("text").html(`\ ${year} \ `);
+            dot.attr(
+              "transform",
+              `translate(${width - margin.right + 30},${y + 2})`
+            );
+            dot.select("text").html(`\ ${year} \ `);
+          };
+
+          const drawLines = (lines, x, y) => {
+            // Draw the line
+
+            lines.join(
+              enter => {
+                return enter
+                  .append("path")
+                  .attr("fill", "none")
+                  .attr("stroke", "url(#line-gradient)")
+                  .attr("stroke-width", 1)
+                  .attr("stroke-opacity", 0.2)
+                  .classed("serie", true)
+                  .attr("d", d => {
+                    return d3
+                      .line()
+                      .x(function(d) {
+                        return x(d.month);
+                      })
+                      .y(function(d) {
+                        return y(+d.n);
+                      })(d[1]);
+                  })
+                  .on("mouseover", function(event, d) {
+                    d3.select(this)
+                      .transition()
+                      .duration("100")
+                      .attr("stroke-width", 6)
+                      .attr("stroke-opacity", 1);
+                    const year = d[0];
+                    const n = d[1][11].n;
+
+                    dot.attr(
+                      "transform",
+                      `translate(${width - margin.right + 30},${y(n) + 2})`
+                    );
+
+                    dot.select("text").html(`\ ${year} \ `);
+                  })
+                  .on("mouseout", function(d, i) {
+                    d3.select(this)
+                      .transition()
+                      .duration("500")
+                      .attr("stroke-width", 1)
+                      .attr("stroke-opacity", 0.2);
+
+                    dot.select("text").html(`\  \ `);
+                  });
+              },
+              update => {},
+              exit => {
+                return exit.remove();
+              }
+            );
+
+            return lines;
+          };
+
+          const dataAtYear = year => d => {
+            return d.year == year;
+          };
+
+          // d3.select(svg).remove()
+          // group the data: I want to draw one line per group
+          let currentYear = yearMin;
+
+          const sumstat = d3.group(data, d => d.year.toString()); // nest function allows to group the calculation per level of a factor
+          drawAxes(svg, x, y);
+          defineGradient(svg, x, y, ymin, ymax);
+          const dot = drawLegend(svg);
+          const lines = drawLines(svg.selectAll(".line").data(sumstat), x, y);
+
+          const update = () => {
+            const yearData = data.filter(dataAtYear(currentYear));
+            const thisYear = d3.group(yearData, d => d.year.toString()); // nest function allows to group the calculation per level of a factor
+            const lastEntry = thisYear.get(currentYear.toString())[11];
+            // console.log(thisYear);
+            updateLegend(lastEntry.year, y(lastEntry.n));
+
+            let lineYear = svg.selectAll(".line").data(thisYear);
+
+            lineYear.join(
+              enter => {
+                return enter
+                  .append("path")
+                  .attr("fill", "none")
+                  .attr("stroke", "url(#line-gradient)")
+                  .attr("stroke-width", 6)
+                  .attr("stroke-opacity", 1)
+                  .attr("d", d => {
+                    return d3
+                      .line()
+                      .x(function(d) {
+                        return x(d.month);
+                      })
+                      .y(function(d) {
+                        return y(+d.n);
+                      })(d[1]);
+                  })
+                  .transition()
+                  .duration(500)
+                  .attr("stroke-width", 1)
+                  .attr("stroke-opacity", 0.2);
+              },
+              update => {},
+              exit => {
+                return exit.remove();
+              }
+            );
+
+            currentYear = currentYear + 1;
+            if (currentYear > yearMax) {
+              clearInterval(intv);
+              intv = null;
+            }
+          };
+
+          let intv = setInterval(update, 700);
+        }
+      );
+    </script>
+  </body>
+</html>
